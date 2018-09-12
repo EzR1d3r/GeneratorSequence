@@ -7,8 +7,9 @@
 #include <map>
 
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <windows.h>
+//#include <sys/socket.h>
+//#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -179,10 +180,24 @@ int main()
 	int ClientSocked, MasterSocked;
 	struct sockaddr_in addr;
 
+	WSAData data;
+	int wsa_return_code = WSAStartup (MAKEWORD(1, 1), &data);
+	if(wsa_return_code != 0)
+	{
+		printf ("Error WSAStartup code: %d", WSAGetLastError () );
+		exit(1);
+	}
+	// без WSAStartup() функция socket(AF_INET, SOCK_STREAM, 0)
+	// возвращает "-1", а WSAGetLastError() возвращает WSANOTINITIALISED
+	// при этом perror("socket") выводит "socket: No error"
+	// http://www.frolov-lib.ru/books/bsp/v23/ch5_2.html
+	// http://www.frolov-lib.ru/books/bsp/v23/ch5_3.html
+
 	MasterSocked = socket(AF_INET, SOCK_STREAM, 0);
 	if( MasterSocked < 0 )
 	{
-		perror("socket");
+		printf ("WSA Error code: %d", WSAGetLastError () );
+//		perror("socket");
 		exit(1);
 	}
 
@@ -190,9 +205,9 @@ int main()
 	// You can use setsockopt() to set the SO_REUSEADDR socket option, which explicitly allows a process to bind to a port which remains in TIME_WAIT (it still only allows a single process to be bound to that port).
 	// This is the both the simplest and the most effective option for reducing the "address already in use" error.
 
-	int opt = 1;
-	if (setsockopt (MasterSocked, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof (opt)) == -1)
-		perror("setsockopt");
+//	int opt = 1;
+//	if (setsockopt (MasterSocked, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof (opt)) == -1)
+//		perror("setsockopt");
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons( PORT_NUM );
