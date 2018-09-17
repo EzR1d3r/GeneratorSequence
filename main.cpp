@@ -18,6 +18,7 @@
 #define PORT_NUM 8932
 
 typedef unsigned long long int uint64; // целочисленный неотрицательный 64-х битный счетчик
+typedef unsigned char uchar;
 
 struct GeneratorSequence
 {
@@ -26,7 +27,7 @@ struct GeneratorSequence
 		uint64 nStartVal = 0;
 		uint64 nStep = 0;
 		// uint64 nValue = 0; // похоже по тз - типо нельзя здесь хранить... вродее как напрашивается...
-		void print()
+		void print() const
 		{
 			printf( "start = %llu step = %llu \n", nStartVal, nStep );
 		}
@@ -43,48 +44,35 @@ struct GeneratorSequence
 		}
 	};
 
-	std::vector<GeneratorParams> genParams = { GeneratorParams(), GeneratorParams(), GeneratorParams() };
+	typedef std::map<std::string, GeneratorParams> GPMap;
+
+	GPMap genParams = {
+						{"seq1", GeneratorParams()},
+						{"seq2", GeneratorParams()},
+						{"seq3", GeneratorParams()}
+					  };
 	void print()
 	{
-		for ( auto gp : genParams )
-			gp.print();
+		for ( const auto& gp : genParams )
+			gp.second.print();
 	}
-	void parseParams( const std::string sVal )
+
+	void parseParams( const std::string command )
 	{
-		// а вот если бы можно было использовать QString код был бы в 3 раза короче...
-		int nSeqIndex;
-
-		std::string sSeqIndex = sVal.substr( sVal.find( "seq" ) + 3, 1 ); // знаем точно, что среди команд только seq1, seq2, seq3
 		try
 		{
-			nSeqIndex = std::stoi( sSeqIndex );
+			std::string seq = command.substr(0,4);
+			std::string params = command[4] == ' ' ? command.substr(5, command.size()) : "";
+
+			genParams.at(seq).nStep     = std::stoi( params.substr(params.find(' '), params.size()) );
+			genParams.at(seq).nStartVal = std::stoi( params.substr(0, params.find(' ')) );
 		}
-		catch (std::invalid_argument)
+		catch (std::exception e)
 		{
-			nSeqIndex = -1;
-		}
-
-		if ( nSeqIndex < 1 || nSeqIndex > 3 ) return; // ignore all other - only 1,2,3
-
-		int nFSpace = sVal.find( ' ' );
-		int nLSpace = sVal.rfind( ' ' );
-
-		std::string sStartVal = sVal.substr( nFSpace + 1, nLSpace-1-nFSpace);
-		std::string sStep = sVal.substr( nLSpace + 1, sVal.size());
-
-		try
-		{
-			genParams[ nSeqIndex-1 ].nStartVal = std::stoi( sStartVal );
-			genParams[ nSeqIndex-1 ].nStep = std::stoi( sStep );
-		}
-		catch (std::invalid_argument)
-		{
-			genParams[ nSeqIndex-1 ].nStartVal = 0;
-			genParams[ nSeqIndex-1 ].nStep = 0;
-		}
-
-		//std::cout << sVal << nSeqIndex << nFSpace << nLSpace << " " << sStartVal << " " << sStep << std::endl; // only for debug string manipulation
+			printf( "%s Error: invalid command\n", e.what() );
+		};
 	}
+
 };
 
 
@@ -94,7 +82,7 @@ void processSocked(const int sockedID, GeneratorArray& arr, std::mutex& m_arr, b
 {
 	char buf[1024];
 	int bytes_read = -1;
-	std::vector<uint64> seqValues = { 0, 0, 0 };
+	std::map<std::string, uint64> process_values;
 
 	// Work with shared data - clients settings container
 	m_arr.lock();
@@ -124,24 +112,26 @@ void processSocked(const int sockedID, GeneratorArray& arr, std::mutex& m_arr, b
 		else if ( str.find("export seq") != std::string::npos )
 		{
 			m_arr.lock();
-			GeneratorSequence seq = arr[ sockedID ];
+			GeneratorSequence generator = arr[ sockedID ];
 			m_arr.unlock();
 
 			// init start values
-			for ( int i = 0; i < 3; ++i )
-				seqValues[i] = seq.genParams[i].nStartVal;
+			for ( const auto& gp : generator.genParams )
+				process_values[ gp.first ] = gp.second.nStartVal;
 
 			int nIter = 0;
-			char buf[128];
-			int bytes_count = 0;
 
 			while ( nIter < 10 ) // по ТЗ не определено количество вычислений, ставить бесконечный цикл усыпая клиента беспрерывным выводом как-то глупо, ставим понравившееся число итераций
 			{
-				bytes_count = sprintf( buf, "%llu %llu %llu\n", seqValues[0], seqValues[1], seqValues[2] );
-				send(sockedID, buf, bytes_count, 0);
+				std::string collect_values;
+				for (const auto& qv : process_values)
+					collect_values.append( std::to_string (qv.second) + " " );
+				collect_values.append("\n");
 
-				for ( int i = 0; i < 3; ++i )
-					seqValues[i] = seq.genParams[i].calc( seqValues[i] );
+				send(sockedID, collect_values.c_str(), collect_values.size(), 0);
+
+				for ( auto& qv : process_values )
+					qv.second = generator.genParams[qv.first].calc( qv.second );
 
 				++nIter;
 			}
