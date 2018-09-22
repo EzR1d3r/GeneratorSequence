@@ -20,14 +20,14 @@
 typedef unsigned long long int uint64; // целочисленный неотрицательный 64-х битный счетчик
 typedef unsigned char uchar;
 
-struct GeneratorSequence
+struct SequenceGenerator
 {
-	struct GeneratorParams
+	struct SingleGenerator
 	{
 		uint64 nStartVal = 0;
 		uint64 nStep = 0;
 		// uint64 nValue = 0; // похоже по тз - типо нельзя здесь хранить... вродее как напрашивается...
-		void print() const
+		void print_params() const
 		{
 			printf( "start = %llu step = %llu \n", nStartVal, nStep );
 		}
@@ -44,28 +44,28 @@ struct GeneratorSequence
 		}
 	};
 
-	typedef std::map<std::string, GeneratorParams> GPMap;
+	typedef std::map<std::string, SingleGenerator> SGMap;
 
-	GPMap genParams = {
-						{"seq1", GeneratorParams()},
-						{"seq2", GeneratorParams()},
-						{"seq3", GeneratorParams()}
+	SGMap Sequence = {
+						{"seq1", SingleGenerator()},
+						{"seq2", SingleGenerator()},
+						{"seq3", SingleGenerator()}
 					  };
-	void print()
+	void print_generators_params()
 	{
-		for ( const auto& gp : genParams )
-			gp.second.print();
+		for ( const auto& gp : Sequence )
+			gp.second.print_params();
 	}
 
-	void parseParams( const std::string command )
+	void parseCommand( const std::string command )
 	{
 		try
 		{
 			std::string seq = command.substr(0,4);
 			std::string params = command[4] == ' ' ? command.substr(5, command.size()) : "";
 
-			genParams.at(seq).nStep     = std::stoi( params.substr(params.find(' '), params.size()) );
-			genParams.at(seq).nStartVal = std::stoi( params.substr(0, params.find(' ')) );
+			Sequence.at(seq).nStep     = std::stoi( params.substr(params.find(' '), params.size()) );
+			Sequence.at(seq).nStartVal = std::stoi( params.substr(0, params.find(' ')) );
 		}
 		catch (std::exception e)
 		{
@@ -76,9 +76,9 @@ struct GeneratorSequence
 };
 
 
-typedef std::map<int, GeneratorSequence> GeneratorArray;
+typedef std::map<int, SequenceGenerator> GeneratorArray;
 
-void processSocked(const int sockedID, GeneratorArray& arr, std::mutex& m_arr, bool& bShutdownServer)
+void processSocket(const int socketID, GeneratorArray& arr, std::mutex& m_arr, bool& bShutdownServer)
 {
 	char buf[1024];
 	int bytes_read = -1;
@@ -86,18 +86,18 @@ void processSocked(const int sockedID, GeneratorArray& arr, std::mutex& m_arr, b
 
 	// Work with shared data - clients settings container
 	m_arr.lock();
-	arr.insert( std::pair<int, GeneratorSequence>( sockedID, GeneratorSequence() ) );
+	arr.insert( std::pair<int, SequenceGenerator>( socketID, SequenceGenerator() ) );
 	m_arr.unlock();
 
 	// only for debug
 	for ( auto& map_pair: arr )
-		map_pair.second.print();
+		map_pair.second.print_generators_params();
 
-	std::cout << "Client connected, Socked ID = " << sockedID << std::endl;
+	std::cout << "Client connected, Socked ID = " << socketID << std::endl;
 
 	do
 	{
-		bytes_read = recv(sockedID, buf, 1024, 0);
+		bytes_read = recv(socketID, buf, 1024, 0);
 
 		std::string str( buf, bytes_read );
 
@@ -112,11 +112,11 @@ void processSocked(const int sockedID, GeneratorArray& arr, std::mutex& m_arr, b
 		else if ( str.find("export seq") != std::string::npos )
 		{
 			m_arr.lock();
-			GeneratorSequence generator = arr[ sockedID ];
+			SequenceGenerator generator = arr[ socketID ];
 			m_arr.unlock();
 
 			// init start values
-			for ( const auto& gp : generator.genParams )
+			for ( const auto& gp : generator.Sequence )
 				process_values[ gp.first ] = gp.second.nStartVal;
 
 			int nIter = 0;
@@ -128,10 +128,10 @@ void processSocked(const int sockedID, GeneratorArray& arr, std::mutex& m_arr, b
 					collect_values.append( std::to_string (qv.second) + " " );
 				collect_values.append("\n");
 
-				send(sockedID, collect_values.c_str(), collect_values.size(), 0);
+				send(socketID, collect_values.c_str(), collect_values.size(), 0);
 
 				for ( auto& qv : process_values )
-					qv.second = generator.genParams[qv.first].calc( qv.second );
+					qv.second = generator.Sequence[qv.first].calc( qv.second );
 
 				++nIter;
 			}
@@ -139,25 +139,25 @@ void processSocked(const int sockedID, GeneratorArray& arr, std::mutex& m_arr, b
 		else if ( str.find("seq") != std::string::npos )
 		{
 			m_arr.lock();
-			GeneratorSequence seq = arr[ sockedID ];
-			seq.parseParams( str );
-			seq.print();
-			arr[ sockedID ] = seq; // not optimal by value, but not critical now...
+			SequenceGenerator seq = arr[ socketID ];
+			seq.parseCommand( str );
+			seq.print_generators_params();
+			arr[ socketID ] = seq; // not optimal by value, but not critical now...
 			m_arr.unlock();
 		}
 
 	} while ( bytes_read != 0);
 
-	std::cout << "Client disconnected, Socked ID = " << sockedID << std::endl;
-	close( sockedID );
+	std::cout << "Client disconnected, Socked ID = " << socketID << std::endl;
+	close( socketID );
 
 	m_arr.lock();
-	arr.erase( arr.find( sockedID ) );
+	arr.erase( arr.find( socketID ) );
 	m_arr.unlock();
 
 	// only for debug
 	for ( auto& map_pair: arr )
-		map_pair.second.print();
+		map_pair.second.print_generators_params();
 }
 
 int main()
@@ -222,7 +222,7 @@ int main()
 			exit(3);
 		}
 
-		std::thread * pThread = new std::thread(processSocked, ClientSocked, std::ref( g_Generators ), std::ref( m_Generators ), std::ref( bAppExit ) );
+		std::thread * pThread = new std::thread(processSocket, ClientSocked, std::ref( g_Generators ), std::ref( m_Generators ), std::ref( bAppExit ) );
 
 		g_Threads.emplace_back( pThread );
 		std::cout << bAppExit << std::endl;
